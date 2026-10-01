@@ -82,7 +82,7 @@ def get_access_token() -> str:
     # helper here instead of reading an environment variable, e.g.:
     #
     #     from connector_credentials import get_token  # generated helper
-    #     return get_token("custom.linkedin")
+    #     return get_token("custom.linkedin-token")
     #
     # The token is fetched from the Secure Credentials Store at call time
     # and is never printed or written to a file.

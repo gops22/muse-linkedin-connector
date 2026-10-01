@@ -84,8 +84,11 @@ Agreement (§8.2) and risks account restriction, so it is not a fallback.
 ## How it works
 
 ```
-You ──approve on LinkedIn──► Muse secure connect page
-                                │  stores Client ID/Secret + tokens
+You ──approve on LinkedIn──► manual authorization-code exchange
+                                │  you get an access token
+                                ▼
+                     entered on Muse's secure connect page
+                                │  (API-key style connector)
                                 ▼
                         Secure Credentials Store
                                 │  token supplied at call time
@@ -93,8 +96,10 @@ You ──approve on LinkedIn──► Muse secure connect page
    Muse skill (SKILL.md) ──► bin/*.py ──► https://api.linkedin.com
 ```
 
-- **Connector** (`custom.linkedin`) — the OAuth registration Muse holds:
-  endpoints, scopes, and your credential.
+- **Connector** (`custom.linkedin-token`) — the registration Muse
+  holds: an access token you mint from your own LinkedIn app (Part 2,
+  Path B). The OAuth registration name `custom.linkedin` (Path A) is
+  separate — and currently unusable, for reasons Part 2 explains.
 - **Skill** (`SKILL.md` + `bin/`) — the instructions and small Python CLIs
   Muse actually runs. The scripts resolve the token at call time; nothing
   secret is ever written to a file.
@@ -157,9 +162,23 @@ LinkedIn issues API credentials per **app**, so you create one first
 
 ## Part 2 — Connect LinkedIn to Muse
 
-1. In Muse chat, ask Muse to build/connect the LinkedIn connector (or use
-   the connect link Muse gives you). Muse opens a **secure connect page**
-   for a custom OAuth connector with these settings:
+> **Reality check, verified live on 2026-10-01 — read this first.**
+> The obvious route does **not** currently work: entering your Client
+> ID and Client Secret on Muse's OAuth connect page (Path A) fails at
+> Muse's hosted token exchange with `401 invalid_client` ("Client
+> authentication failed") — even though the *same* Client ID/Secret
+> succeed in a manual exchange against LinkedIn's token endpoint, and
+> even with the redirect URL registered exactly as specified. The
+> failure is inside Muse's exchange, not in your app or credentials
+> (reproduced four times; reported to the Muse team). **Use Path B** —
+> it is what this connector actually runs on today. Keep Path A's
+> settings; if Muse fixes its exchange, Path A becomes the cleaner
+> setup and this section flips back.
+
+### Path A — OAuth connect via Client ID/Secret (currently failing)
+
+1. Ask Muse for the connect link for a custom OAuth connector with
+   these settings:
 
    | Setting | Value |
    | --- | --- |
@@ -169,20 +188,60 @@ LinkedIn issues API credentials per **app**, so you create one first
    | API hosts | `api.linkedin.com`, `www.linkedin.com` (media uploads) |
    | Scopes | `openid profile email w_member_social` |
 
-2. On that page, enter the **Client ID** and **Client Secret** from your
-   app's Auth tab. They go directly into secure storage — Muse never sees
-   them in chat.
-3. You'll be redirected to LinkedIn to **approve** the requested
-   permissions. Approve with the same account the app belongs to.
-4. Done — the connector is registered as `custom.linkedin`. The first real
-   API call is what verifies the credential; if it returns `401/403`,
-   Muse checks the token, its expiry, and the granted scopes before
+2. On the secure page, enter the **Client ID** and **Client Secret**
+   from your app's Auth tab (they go directly into secure storage),
+   then approve on LinkedIn's consent screen.
+3. Expected result today: the exchange fails with `401 invalid_client`.
+   That is the known Muse-side issue above — proceed to Path B.
+
+### Path B — Access token (works today)
+
+You play the role of the OAuth client yourself, once, using LinkedIn's
+standard authorization-code flow:
+
+1. **Get an authorization code.** Open this URL in your browser
+   (substitute your Client ID), sign in, and approve:
+
+   ```
+   https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=<YOUR_CLIENT_ID>&redirect_uri=https://agent.meta.ai/api/hatch/oauth/callback&scope=openid%20profile%20email%20w_member_social
+   ```
+
+   The browser lands on the redirect URL with `?code=...` in the
+   address bar — copy the code value. (The landing page itself is
+   irrelevant; the code is what matters.)
+2. **Exchange the code for a token — immediately.** Codes are
+   single-use and expire within a minute or two, so have this ready
+   *before* Step 1 and run it within seconds:
+
+   ```bash
+   curl -X POST https://www.linkedin.com/oauth/v2/accessToken \
+     -d grant_type=authorization_code \
+     -d code=<CODE> \
+     -d redirect_uri=https://agent.meta.ai/api/hatch/oauth/callback \
+     -d client_id=<YOUR_CLIENT_ID> \
+     -d client_secret=<YOUR_CLIENT_SECRET>
+   ```
+
+   The JSON response contains your `access_token` (~60-day lifetime).
+   Run this locally; your Client Secret never goes anywhere else.
+3. **Register the token with Muse under a fresh name.** Ask Muse to
+   set up an API-key style connector for it, registered as
+   `custom.linkedin-token`. ⚠️ Do **not** reuse a name already
+   registered for OAuth (`custom.linkedin`): the token card then
+   fails with "Failed to connect" even for a verified-live token —
+   a registration collision, verified the hard way. A fresh name
+   connects instantly.
+4. Done — the first real API call verifies the credential
+   (`linkedin_profile.py --status`). If it returns `401/403`, Muse
+   checks the token, its expiry, and the granted scopes before
    changing anything.
 
-> **Token lifetimes:** LinkedIn access tokens last ~60 days. A refresh
-> token (~1 year) is issued only to eligible/approved apps — if yours
-> didn't get one, reconnect the connector when posting starts failing
-> with `401` rather than debugging the code.
+> **Token lifetimes:** LinkedIn access tokens last ~60 days, and this
+> app tier gets **no refresh token**. Renewal = repeat Path B Steps
+> 1–2 for a fresh token and reconnect the `custom.linkedin-token`
+> connector with it. Don't debug the code when posting suddenly
+> starts failing with `401` two months in — check the token's age
+> first.
 >
 > **API versioning:** the scripts pin `LinkedIn-Version: 202608`
 > (override with the `LINKEDIN_API_VERSION` env var). LinkedIn retires
@@ -194,10 +253,10 @@ LinkedIn issues API credentials per **app**, so you create one first
 Once the connector is connected, Muse scaffolds the skill from it:
 
 ```bash
-/opt/hatch/skills/skill-creator/bin/scaffold-connector-skill --provider linkedin
+/opt/hatch/skills/skill-creator/bin/scaffold-connector-skill --provider linkedin-token
 ```
 
-This generates `~/workspace/skills/linkedin/` with a `SKILL.md` whose
+This generates `~/workspace/skills/linkedin-token/` with a `SKILL.md` whose
 Tooling/Auth sections already describe the live credential mechanics. Then:
 
 1. Copy this repo's `bin/*.py` into the scaffolded skill's `bin/` folder
@@ -209,7 +268,7 @@ Tooling/Auth sections already describe the live credential mechanics. Then:
 3. Compile-check the scripts:
 
 ```bash
-python3 -m py_compile ~/workspace/skills/linkedin/bin/*.py
+python3 -m py_compile ~/workspace/skills/linkedin-token/bin/*.py
 ```
 
 4. Test with a read before any write: ask Muse *"show my LinkedIn
@@ -324,6 +383,8 @@ Never commit `.env` — it's in `.gitignore` for a reason.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| `401 invalid_client` during Muse's OAuth connect | Muse's hosted token exchange rejects the grant (known issue, even with proven-good credentials) | Use **Part 2, Path B**: manual code exchange + token connector under a fresh name |
+| Token card says "Failed to connect" | Provider name already registered (e.g. for OAuth) — registration collision | Register the token under a **fresh** provider name (`custom.linkedin-token`) |
 | `401` on any call | Token expired (~60 days) or not attached | Reconnect the connector; verify the request carries the token |
 | `403` on profile | App lacks the OpenID Connect product | Add **Sign In with LinkedIn using OpenID Connect** in the Products tab |
 | `403` on posting | App lacks `w_member_social` | Add **Share on LinkedIn** in the Products tab, then reconnect |

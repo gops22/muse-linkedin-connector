@@ -1,5 +1,5 @@
 ---
-name: "linkedin"
+name: "linkedin_token"
 description: "Work with the user's own LinkedIn account through LinkedIn's official API: fetch the authenticated member's profile; publish posts in every organic format (text, image/multi-image, video, document, article, poll, celebration, reshare, @mentions) with per-post audience control; schedule posts; and edit or delete published posts. Comments and reactions are implemented but require LinkedIn's vetted Community Management scope. Use for LinkedIn profile lookups and LinkedIn posting. Does not cover job search/apply, inbox messaging, people search, or connection invitations — LinkedIn restricts those to partner programs and they are unavailable to this connector."
 ---
 
@@ -38,8 +38,17 @@ extra scope) comment and react. No browser automation is involved.
 - `bin/linkedin_api.py` — shared client (auth, headers, error handling).
 
 ## Auth
-OAuth 2.0 authorization-code flow through Muse's custom-connector
-connection (`custom.linkedin`):
+The working connection is an **access-token registration**
+(`custom.linkedin-token`): the user mints a token from their own
+LinkedIn app via a manual authorization-code exchange and registers
+the token itself with Muse. The OAuth registration
+(`custom.linkedin`, Client ID/Secret entered on Muse's connect page)
+currently **fails at Muse's hosted token exchange** with
+`401 invalid_client` despite proven-good credentials — a known
+Muse-side issue, reproduced repeatedly and reported. Full story and
+both setup paths: README, Part 2.
+
+The underlying LinkedIn app configuration the token comes from:
 
 - Authorization URL: `https://www.linkedin.com/oauth/v2/authorization`
 - Token URL: `https://www.linkedin.com/oauth/v2/accessToken`
