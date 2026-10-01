@@ -1,0 +1,5 @@
+# Secrets and local noise — never commit credentials
+.env
+*.token
+__pycache__/
+*.pyc
